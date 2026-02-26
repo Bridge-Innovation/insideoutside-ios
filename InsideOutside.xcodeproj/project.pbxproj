@@ -272,9 +272,10 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InsideOutside/Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app reads Time in Daylight data to compare Apple's daylight detection with other sensor signals for indoor/outdoor detection research.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "This test app needs continuous location access to log GPS accuracy while you go about your day, even when the app is in the background.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This test app reads GPS accuracy and location to determine if you are inside or outside.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "This test app reads magnetometer and barometer data to help determine if you are inside or outside.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app logs GPS accuracy data to help determine if you're inside or outside. Your actual coordinates are never exported or shared.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "This app reads magnetometer data to help detect indoor vs outdoor environments.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -310,9 +311,10 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InsideOutside/Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app reads Time in Daylight data to compare Apple's daylight detection with other sensor signals for indoor/outdoor detection research.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "This test app needs continuous location access to log GPS accuracy while you go about your day, even when the app is in the background.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This test app reads GPS accuracy and location to determine if you are inside or outside.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "This test app reads magnetometer and barometer data to help determine if you are inside or outside.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app logs GPS accuracy data to help determine if you're inside or outside. Your actual coordinates are never exported or shared.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "This app reads magnetometer data to help detect indoor vs outdoor environments.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

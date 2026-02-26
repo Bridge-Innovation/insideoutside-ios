@@ -7,6 +7,7 @@ import Foundation
 import CoreLocation
 import CoreMotion
 import Network
+import HealthKit
 import Combine
 
 /// Holds a snapshot of all sensor readings at a point in time
@@ -39,14 +40,17 @@ struct SensorSnapshot: Identifiable, Codable {
     let isExpensive: Bool            // True = cellular
     let isConstrained: Bool          // True = low data mode
     
+    // HealthKit
+    let timeInDaylight: Double?      // Cumulative minutes today from Apple's sensor
+    
     // Ground truth
-    let userLabel: String            // "INSIDE", "OUTSIDE", or "UNKNOWN"
+    let userLabel: String            // "INSIDE", "OUTSIDE", "TRANSIT", or "UNKNOWN"
     
     init(timestamp: Date, latitude: Double?, longitude: Double?, horizontalAccuracy: Double?,
          verticalAccuracy: Double?, altitude: Double?, floor: Int?, speed: Double?, course: Double?,
          relativeAltitude: Double?, pressure: Double?, magX: Double?, magY: Double?, magZ: Double?,
          magMagnitude: Double?, networkPathType: String, isExpensive: Bool, isConstrained: Bool,
-         userLabel: String) {
+         timeInDaylight: Double?, userLabel: String) {
         self.id = UUID()
         self.timestamp = timestamp
         self.latitude = latitude
@@ -66,6 +70,7 @@ struct SensorSnapshot: Identifiable, Codable {
         self.networkPathType = networkPathType
         self.isExpensive = isExpensive
         self.isConstrained = isConstrained
+        self.timeInDaylight = timeInDaylight
         self.userLabel = userLabel
     }
 }
@@ -96,6 +101,10 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var networkType: String = "unknown"
     @Published var isExpensive: Bool = false
     
+    // HealthKit
+    @Published var timeInDaylight: Double?  // Cumulative minutes today
+    @Published var healthKitAuthorized: Bool = false
+    
     // Log
     @Published var snapshots: [SensorSnapshot] = []
     @Published var logCount: Int = 0
@@ -106,9 +115,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let motionManager = CMMotionManager()
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "NetworkPathMonitor")
+    private let healthStore = HKHealthStore()
     
     // Logging timer
     private var logTimer: Timer?
+    
+    // HealthKit polling timer (less frequent — every 30s)
+    private var healthTimer: Timer?
     
     // Auto-save
     private var saveCounter: Int = 0
@@ -126,6 +139,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         setupAltimeter()
         setupMagnetometer()
         setupNetworkMonitor()
+        requestHealthKitAccess()
     }
     
     // MARK: - Setup
@@ -134,13 +148,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
-        
         #if !targetEnvironment(simulator)
         locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.showsBackgroundLocationIndicator = true
         #endif
-        
         locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.showsBackgroundLocationIndicator = true
         locationManager.requestAlwaysAuthorization()
     }
     
@@ -183,6 +195,60 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isExpensive = path.isExpensive
     }
     
+    // MARK: - HealthKit
+    
+    private func requestHealthKitAccess() {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            print("⚠️ HealthKit not available")
+            return
+        }
+        
+        // Time in Daylight — available iOS 17+
+        guard let daylightType = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) else {
+            print("⚠️ Time in Daylight type not available (requires iOS 17+)")
+            return
+        }
+        
+        let readTypes: Set<HKObjectType> = [daylightType]
+        
+        healthStore.requestAuthorization(toShare: nil, read: readTypes) { [weak self] success, error in
+            DispatchQueue.main.async {
+                if success {
+                    self?.healthKitAuthorized = true
+                    print("✅ HealthKit authorized for Time in Daylight")
+                    self?.fetchTimeInDaylight()
+                } else {
+                    print("❌ HealthKit authorization failed: \(error?.localizedDescription ?? "unknown")")
+                }
+            }
+        }
+    }
+    
+    func fetchTimeInDaylight() {
+        guard let daylightType = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) else { return }
+        
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: Date())
+        let now = Date()
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: now, options: .strictStartDate)
+        
+        let query = HKStatisticsQuery(quantityType: daylightType, quantitySamplePredicate: predicate, options: .cumulativeSum) { [weak self] _, result, error in
+            DispatchQueue.main.async {
+                if let sum = result?.sumQuantity() {
+                    let minutes = sum.doubleValue(for: HKUnit.minute())
+                    self?.timeInDaylight = minutes
+                    print("☀️ Time in Daylight today: \(String(format: "%.1f", minutes)) min")
+                } else {
+                    self?.timeInDaylight = 0
+                    print("☀️ Time in Daylight: no data yet today (\(error?.localizedDescription ?? ""))")
+                }
+            }
+        }
+        
+        healthStore.execute(query)
+    }
+    
     // MARK: - Start / Stop Logging
     
     func startLogging() {
@@ -210,6 +276,12 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             }
         }
         
+        // Fetch HealthKit immediately and then every 30s
+        fetchTimeInDaylight()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            self?.fetchTimeInDaylight()
+        }
+        
         // Record first snapshot immediately (slight delay for sensors to populate)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.recordSnapshot()
@@ -225,6 +297,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isLogging = false
         logTimer?.invalidate()
         logTimer = nil
+        healthTimer?.invalidate()
+        healthTimer = nil
         locationManager.stopUpdatingLocation()
         altimeter.stopRelativeAltitudeUpdates()
         motionManager.stopMagnetometerUpdates()
@@ -261,6 +335,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             networkPathType: networkType,
             isExpensive: isExpensive,
             isConstrained: false,
+            timeInDaylight: timeInDaylight,
             userLabel: currentLabel
         )
         
@@ -333,19 +408,18 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
     
-    // MARK: - CSV Export
+    // MARK: - CSV Export (NO lat/lon for privacy)
     
     func exportCSV() -> URL? {
         let dateFormatter = ISO8601DateFormatter()
         
-        var csv = "timestamp,label,lat,lon,h_accuracy,v_accuracy,altitude,floor,speed,rel_altitude,pressure_kPa,mag_x,mag_y,mag_z,mag_magnitude,network_type,is_expensive\n"
+        var csv = "timestamp,label,h_accuracy,v_accuracy,altitude,floor,speed,rel_altitude,pressure_kPa,mag_x,mag_y,mag_z,mag_magnitude,network_type,is_expensive,time_in_daylight_min\n"
         
         for s in snapshots {
             var row = [String]()
             row.append(dateFormatter.string(from: s.timestamp))
             row.append(s.userLabel)
-            row.append(s.latitude.map { String(format: "%.6f", $0) } ?? "")
-            row.append(s.longitude.map { String(format: "%.6f", $0) } ?? "")
+            // NO lat/lon — privacy for shared testing
             row.append(s.horizontalAccuracy.map { String(format: "%.1f", $0) } ?? "")
             row.append(s.verticalAccuracy.map { String(format: "%.1f", $0) } ?? "")
             row.append(s.altitude.map { String(format: "%.1f", $0) } ?? "")
@@ -359,6 +433,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             row.append(s.magMagnitude.map { String(format: "%.2f", $0) } ?? "")
             row.append(s.networkPathType)
             row.append(String(s.isExpensive))
+            row.append(s.timeInDaylight.map { String(format: "%.1f", $0) } ?? "")
             csv += row.joined(separator: ",") + "\n"
         }
         
